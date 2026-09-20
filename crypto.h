@@ -1,9 +1,18 @@
+#ifndef CRYPTO_H
+#define CRYPTO_H
 
+#include <openssl/evp.h>
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+#include "block_chain.h"
 
-typedef struct KeyPair {
-    char public_key[256];
-    char private_key[256];
-} KeyPair;
+struct KeyPair {
+    EVP_PKEY *pkey;
+};
 
-KeyPair generate_keypair();
-int sign_block(const KeyPair *keypair, const Block *block, char *signature);
+KeyPair *generate_keypair(void);
+int sign_block(Block *block, KeyPair *keypair);
+int verify_block_signature(const Block *block, KeyPair *keypair);
+void free_keypair(KeyPair *keypair);
+
+#endif // CRYPTO_H

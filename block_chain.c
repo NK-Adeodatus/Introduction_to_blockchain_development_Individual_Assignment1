@@ -1,192 +1,201 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <openssl/evp.h>
 #include "block_chain.h"
+#include "crypto.h"
 
-/**
- * calculate_hash - compute the SHA-256 hash of a block's fields
- * @block: pointer to the block whose fields will be hashed
- *
- * Return: pointer to a heap-allocated 65-byte hex string (64 chars +
- *         null terminator), or NULL on failure
- */
-char *calculate_hash(Block *block)
+char *calculate_hash(const Block *block)
 {
-	EVP_MD_CTX *ctx;
-	unsigned char digest[EVP_MAX_MD_SIZE];
-	unsigned int digest_len, i;
-	char *hash_str;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return NULL;
 
-	if (block == NULL)
-		return (NULL);
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len;
 
-	ctx = EVP_MD_CTX_new();
-	if (ctx == NULL)
-		return (NULL);
+    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+    
+    // Hash everything INCLUDING signature and sig_len
+    EVP_DigestUpdate(ctx, &block->index, sizeof(block->index));
+    EVP_DigestUpdate(ctx, &block->timestamp, sizeof(block->timestamp));
+    EVP_DigestUpdate(ctx, block->book_id, sizeof(block->book_id));
+    EVP_DigestUpdate(ctx, block->book_title, sizeof(block->book_title));
+    EVP_DigestUpdate(ctx, block->member_id, sizeof(block->member_id));
+    EVP_DigestUpdate(ctx, block->member_name, sizeof(block->member_name));
+    EVP_DigestUpdate(ctx, block->action, sizeof(block->action));
+    EVP_DigestUpdate(ctx, block->previous_hash, sizeof(block->previous_hash));
+    EVP_DigestUpdate(ctx, block->signature, sizeof(block->signature));
+    EVP_DigestUpdate(ctx, &block->sig_len, sizeof(block->sig_len));
 
-	if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-	    EVP_DigestUpdate(ctx, &block->index, sizeof(block->index)) != 1 ||
-	    EVP_DigestUpdate(ctx, &block->timestamp, sizeof(block->timestamp)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->book_id, sizeof(block->book_id)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->book_title, sizeof(block->book_title)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->member_id, sizeof(block->member_id)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->member_name, sizeof(block->member_name)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->action, sizeof(block->action)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->previous_hash, sizeof(block->previous_hash)) != 1 ||
-	    EVP_DigestUpdate(ctx, block->signature, sizeof(block->signature)) != 1 ||
-	    EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1)
-	{
-		EVP_MD_CTX_free(ctx);
-		return (NULL);
-	}
+    EVP_DigestFinal_ex(ctx, digest, &digest_len);
+    EVP_MD_CTX_free(ctx);
 
-	EVP_MD_CTX_free(ctx);
+    char *hash_str = malloc((digest_len * 2) + 1);
+    if (!hash_str) return NULL;
 
-	hash_str = malloc((digest_len * 2) + 1);
-	if (hash_str == NULL)
-		return (NULL);
-
-	for (i = 0; i < digest_len; i++)
-		sprintf(hash_str + (i * 2), "%02x", digest[i]);
-
-	return (hash_str);
+    for (unsigned int i = 0; i < digest_len; i++) {
+        sprintf(hash_str + (i * 2), "%02x", digest[i]);
+    }
+    return hash_str;
 }
 
-int is_book_on_loan(const char *book_id, const Blockchain *blockchain)
+int is_book_on_loan(const Blockchain *blockchain, const char *book_id)
 {
-    if (book_id == NULL || blockchain == NULL)
-        return 0;
+    if (!blockchain || !book_id) return 0;
 
-    for (int i = 0; i < blockchain->num_blocks; i++) {
-        Block *block = &blockchain->blocks[i];
-        if (strcmp(block->book_id, book_id) == 0 && strcmp(block->action, "borrow") == 0) {
-            return 1; // Book is currently on loan
+    for (int i = blockchain->num_blocks - 1; i >= 0; i--) {
+        Block *b = &blockchain->blocks[i];
+        if (strcmp(b->book_id, book_id) == 0) {
+            if (strcmp(b->action, "BORROWED") == 0) return 1;
+            if (strcmp(b->action, "RETURNED") == 0) return 0;
         }
     }
-    return 0; // Book is not on loan
+    return 0;
 }
 
-Block* find_outstanding_borrow(const char *book_id, const Blockchain *blockchain)
+Block* find_outstanding_borrow(const Blockchain *blockchain, const char *book_id)
 {
-    if (book_id == NULL || blockchain == NULL)
-        return NULL;
+    if (!blockchain || !book_id) return NULL;
 
-    for (int i = 0; i < blockchain->num_blocks; i++) {
-        Block *block = &blockchain->blocks[i];
-        if (strcmp(block->book_id, book_id) == 0 && strcmp(block->action, "borrow") == 0) {
-            return block; // Found the outstanding borrow block
+    for (int i = blockchain->num_blocks - 1; i >= 0; i--) {
+        Block *b = &blockchain->blocks[i];
+        if (strcmp(b->book_id, book_id) == 0) {
+            if (strcmp(b->action, "BORROWED") == 0) return b;
+            if (strcmp(b->action, "RETURNED") == 0) return NULL;
         }
     }
-    return NULL; // No outstanding borrow found
+    return NULL;
 }
 
-int add_block(Blockchain *blockchain, Book *book, Member *member, const char *action, const KeyPair *keypair)
+int add_block(Blockchain *blockchain, const Book *book, const Member *member, const char *action, KeyPair *keypair)
 {
-    if (blockchain == NULL || book == NULL || member == NULL || action == NULL || keypair == NULL)
-        return -1;
+    if (!blockchain || !book || !member || !action || !keypair) return 0;
 
-    // Allocate memory for the new block
-    Block *new_block = realloc(blockchain->blocks, sizeof(Block) * (blockchain->num_blocks + 1));
-    if (new_block == NULL)
-        return -1; // Memory allocation failed
+    Block *new_blocks = realloc(blockchain->blocks, (blockchain->num_blocks + 1) * sizeof(Block));
+    if (!new_blocks) return 0;
+    blockchain->blocks = new_blocks;
 
-    blockchain->blocks = new_block;
     Block *block = &blockchain->blocks[blockchain->num_blocks];
+    memset(block, 0, sizeof(Block)); 
 
-    // Fill in the block details
     block->index = blockchain->num_blocks;
     block->timestamp = time(NULL);
-    strncpy(block->book_id, book->book_id, sizeof(block->book_id));
-    strncpy(block->book_title, book->title, sizeof(block->book_title));
-    strncpy(block->member_id, member->member_id, sizeof(block->member_id));
-    strncpy(block->member_name, member->full_name, sizeof(block->member_name));
-    strncpy(block->action, action, sizeof(block->action));
+    strncpy(block->book_id, book->book_id, sizeof(block->book_id) - 1);
+    strncpy(block->book_title, book->title, sizeof(block->book_title) - 1);
+    strncpy(block->member_id, member->member_id, sizeof(block->member_id) - 1);
+    strncpy(block->member_name, member->full_name, sizeof(block->member_name) - 1);
+    strncpy(block->action, action, sizeof(block->action) - 1);
 
-    // Set previous hash
     if (blockchain->num_blocks > 0) {
-        strncpy(block->previous_hash, blockchain->blocks[blockchain->num_blocks - 1].hash, sizeof(block->previous_hash));
+        strncpy(block->previous_hash, blockchain->blocks[blockchain->num_blocks - 1].hash, 64);
     } else {
-        memset(block->previous_hash, 0, sizeof(block->previous_hash)); // Genesis block
+        memset(block->previous_hash, '0', 64);
     }
+    block->previous_hash[64] = '\0';
 
-    // Calculate the hash of the block
+    if (!sign_block(block, keypair)) return 0;
+
     char *hash = calculate_hash(block);
-    if (hash == NULL)
-        return -1; // Hash calculation failed
-
-    strncpy(block->hash, hash, sizeof(block->hash));
+    if (!hash) return 0;
+    strncpy(block->hash, hash, 64);
+    block->hash[64] = '\0';
     free(hash);
-
-    // Sign the block
-    if (sign_block(keypair, block, block->signature) != 0)
-        return -1; // Signing failed
 
     blockchain->num_blocks++;
-    return 0; // Success
+    return 1;
 }
 
-int create_genesis_block(Blockchain *blockchain, const KeyPair *keypair)
+int create_genesis_block(Blockchain *blockchain, KeyPair *keypair)
 {
-    if (blockchain == NULL || keypair == NULL)
-        return -1;
+    if (!blockchain || !keypair) return 0;
 
-    // Allocate memory for the genesis block
     blockchain->blocks = malloc(sizeof(Block));
-    if (blockchain->blocks == NULL)
-        return -1; // Memory allocation failed
+    if (!blockchain->blocks) return 0;
 
-    Block *genesis_block = &blockchain->blocks[0];
-    genesis_block->index = 0;
-    genesis_block->timestamp = time(NULL);
-    memset(genesis_block->book_id, 0, sizeof(genesis_block->book_id));
-    memset(genesis_block->book_title, 0, sizeof(genesis_block->book_title));
-    memset(genesis_block->member_id, 0, sizeof(genesis_block->member_id));
-    memset(genesis_block->member_name, 0, sizeof(genesis_block->member_name));
-    strncpy(genesis_block->action, "genesis", sizeof(genesis_block->action));
-    memset(genesis_block->previous_hash, 0, sizeof(genesis_block->previous_hash));
+    Block *genesis = &blockchain->blocks[0];
+    memset(genesis, 0, sizeof(Block));
 
-    // Calculate the hash of the genesis block
-    char *hash = calculate_hash(genesis_block);
-    if (hash == NULL)
-        return -1; // Hash calculation failed
+    genesis->index = 0;
+    genesis->timestamp = time(NULL);
+    strncpy(genesis->action, "GENESIS", sizeof(genesis->action) - 1);
+    memset(genesis->previous_hash, '0', 64);
+    genesis->previous_hash[64] = '\0';
 
-    strncpy(genesis_block->hash, hash, sizeof(genesis_block->hash));
+    if (!sign_block(genesis, keypair)) return 0;
+
+    char *hash = calculate_hash(genesis);
+    if (!hash) return 0;
+    strncpy(genesis->hash, hash, 64);
+    genesis->hash[64] = '\0';
     free(hash);
 
-    // Sign the genesis block
-    if (sign_block(keypair, genesis_block, genesis_block->signature) != 0)
-        return -1; // Signing failed
-
     blockchain->num_blocks = 1;
-    return 0; // Success
+    return 1;
 }
 
-int is_chain_valid(const Blockchain *blockchain, const KeyPair *keypair)
+int is_chain_valid(const Blockchain *blockchain, KeyPair *keypair)
 {
-    if (blockchain == NULL || keypair == NULL)
-        return 0;
+    if (!blockchain || !keypair || blockchain->num_blocks == 0) return 0;
 
     for (int i = 0; i < blockchain->num_blocks; i++) {
         Block *block = &blockchain->blocks[i];
 
-        // Verify the block's hash
-        char *calculated_hash = calculate_hash(block);
-        if (calculated_hash == NULL || strcmp(calculated_hash, block->hash) != 0) {
-            free(calculated_hash);
-            return 0; // Invalid hash
-        }
-        free(calculated_hash);
-
-        // Verify the block's signature
-        if (verify_signature(keypair, block, block->signature) != 1) {
-            return 0; // Invalid signature
+        if (i > 0) {
+            if (strcmp(block->previous_hash, blockchain->blocks[i - 1].hash) != 0) {
+                return 0; // previous_hash mismatch
+            }
         }
 
-        // Verify the previous hash
-        if (i > 0 && strcmp(block->previous_hash, blockchain->blocks[i - 1].hash) != 0) {
-            return 0; // Invalid previous hash
+        if (!verify_block_signature(block, keypair)) {
+            return 0; // invalid signature
         }
+
+        char *hash = calculate_hash(block);
+        if (strcmp(hash, block->hash) != 0) {
+            free(hash);
+            return 0; // hash mismatch
+        }
+        free(hash);
     }
-    return 1; // Chain is valid
+    return 1;
 }
 
+int save_blockchain(const Blockchain *blockchain, const char *filename)
+{
+    FILE *f = fopen(filename, "wb");
+    if (!f) return 0;
+    if (fwrite(&blockchain->num_blocks, sizeof(int), 1, f) != 1) {
+        fclose(f); return 0;
+    }
+    if (blockchain->num_blocks > 0) {
+        if (fwrite(blockchain->blocks, sizeof(Block), blockchain->num_blocks, f) != (size_t)blockchain->num_blocks) {
+            fclose(f); return 0;
+        }
+    }
+    fclose(f);
+    return 1;
+}
+
+int load_blockchain(Blockchain *blockchain, const char *filename)
+{
+    FILE *f = fopen(filename, "rb");
+    if (!f) return 0;
+
+    int num;
+    if (fread(&num, sizeof(int), 1, f) != 1) {
+        fclose(f); return 0;
+    }
+
+    if (num > 0) {
+        Block *blocks = malloc(num * sizeof(Block));
+        if (fread(blocks, sizeof(Block), num, f) != (size_t)num) {
+            free(blocks); fclose(f); return 0;
+        }
+        blockchain->blocks = blocks;
+    } else {
+        blockchain->blocks = NULL;
+    }
+    blockchain->num_blocks = num;
+    fclose(f);
+    return 1;
+}
