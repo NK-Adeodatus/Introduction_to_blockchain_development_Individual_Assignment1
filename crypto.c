@@ -6,7 +6,16 @@
 #include <openssl/obj_mac.h>
 #include "crypto.h"
 
-// Build a canonical buffer of fields to sign (everything BEFORE signature)
+/**
+ * build_signable_data - Serializes block fields into a contiguous buffer
+ * @block: The block whose fields will be serialized
+ * @out_len: Pointer to store the size of the returned buffer
+ *
+ * Description: Combines all block fields (except signature and hash) into
+ * a single byte array so it can be cryptographically signed or verified.
+ *
+ * Return: Pointer to the newly allocated buffer, or NULL on failure
+ */
 static unsigned char *build_signable_data(const Block *block, size_t *out_len)
 {
     size_t len = sizeof(block->index) + sizeof(block->timestamp) +
@@ -31,6 +40,11 @@ static unsigned char *build_signable_data(const Block *block, size_t *out_len)
     return buf;
 }
 
+/**
+ * generate_keypair - Creates a new ECDSA keypair using prime256v1
+ *
+ * Return: Pointer to a newly allocated KeyPair, or NULL on failure
+ */
 KeyPair *generate_keypair(void)
 {
     KeyPair *kp = malloc(sizeof(KeyPair));
@@ -49,6 +63,13 @@ KeyPair *generate_keypair(void)
     return kp;
 }
 
+/**
+ * sign_block - Generates an ECDSA signature for a block
+ * @block: The block to be signed (will store signature and sig_len)
+ * @keypair: The keypair containing the private key to sign with
+ *
+ * Return: 1 on success, 0 on failure
+ */
 int sign_block(Block *block, KeyPair *keypair)
 {
     if (!block || !keypair || !keypair->pkey) return 0;
@@ -82,6 +103,13 @@ int sign_block(Block *block, KeyPair *keypair)
     return 1;
 }
 
+/**
+ * verify_block_signature - Verifies a block's ECDSA digital signature
+ * @block: The block containing the data and signature to verify
+ * @keypair: The keypair containing the public key
+ *
+ * Return: 1 if the signature is valid, 0 if invalid or on error
+ */
 int verify_block_signature(const Block *block, KeyPair *keypair)
 {
     if (!block || !keypair || !keypair->pkey) return 0;
@@ -104,6 +132,12 @@ int verify_block_signature(const Block *block, KeyPair *keypair)
     return (ret == 1);
 }
 
+/**
+ * free_keypair - Safely deallocates a KeyPair and its OpenSSL components
+ * @keypair: The KeyPair to free
+ *
+ * Return: void
+ */
 void free_keypair(KeyPair *keypair)
 {
     if (keypair) {

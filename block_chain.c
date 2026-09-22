@@ -5,6 +5,15 @@
 #include "block_chain.h"
 #include "crypto.h"
 
+/**
+ * calculate_hash - Computes the SHA-256 hash of a block's full data
+ * @block: The block to be hashed
+ *
+ * Description: Generates a digest spanning all block fields, including
+ * the previously generated cryptographic signature.
+ *
+ * Return: A newly allocated hexadecimal string representing the hash
+ */
 char *calculate_hash(const Block *block)
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -15,7 +24,6 @@ char *calculate_hash(const Block *block)
 
     EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
     
-    // Hash everything INCLUDING signature and sig_len
     EVP_DigestUpdate(ctx, &block->index, sizeof(block->index));
     EVP_DigestUpdate(ctx, &block->timestamp, sizeof(block->timestamp));
     EVP_DigestUpdate(ctx, block->book_id, sizeof(block->book_id));
@@ -39,6 +47,16 @@ char *calculate_hash(const Block *block)
     return hash_str;
 }
 
+/**
+ * is_book_on_loan - Checks if a book is currently borrowed
+ * @blockchain: The ledger containing transaction history
+ * @book_id: The identifier of the book to check
+ *
+ * Description: Scans backwards through the blockchain to find the latest
+ * transaction for a given book and evaluates its status.
+ *
+ * Return: 1 if the book is currently on loan, 0 otherwise
+ */
 int is_book_on_loan(const Blockchain *blockchain, const char *book_id)
 {
     if (!blockchain || !book_id) return 0;
@@ -53,6 +71,13 @@ int is_book_on_loan(const Blockchain *blockchain, const char *book_id)
     return 0;
 }
 
+/**
+ * find_outstanding_borrow - Finds the active borrow record for a book
+ * @blockchain: The ledger containing transaction history
+ * @book_id: The identifier of the book
+ *
+ * Return: Pointer to the corresponding Block, or NULL if none exists
+ */
 Block* find_outstanding_borrow(const Blockchain *blockchain, const char *book_id)
 {
     if (!blockchain || !book_id) return NULL;
@@ -67,6 +92,16 @@ Block* find_outstanding_borrow(const Blockchain *blockchain, const char *book_id
     return NULL;
 }
 
+/**
+ * add_block - Creates and securely appends a new transaction to the ledger
+ * @blockchain: The blockchain to append to
+ * @book: The book involved in the transaction
+ * @member: The member performing the transaction
+ * @action: The transaction type ("BORROWED" or "RETURNED")
+ * @keypair: The ECDSA keypair used to digitally sign the transaction
+ *
+ * Return: 1 on success, 0 on failure
+ */
 int add_block(Blockchain *blockchain, const Book *book, const Member *member, const char *action, KeyPair *keypair)
 {
     if (!blockchain || !book || !member || !action || !keypair) return 0;
@@ -105,6 +140,13 @@ int add_block(Blockchain *blockchain, const Book *book, const Member *member, co
     return 1;
 }
 
+/**
+ * create_genesis_block - Initializes a new ledger with the Genesis Block
+ * @blockchain: The empty blockchain struct to initialize
+ * @keypair: The keypair used to sign the genesis block
+ *
+ * Return: 1 on success, 0 on failure
+ */
 int create_genesis_block(Blockchain *blockchain, KeyPair *keypair)
 {
     if (!blockchain || !keypair) return 0;
@@ -133,6 +175,16 @@ int create_genesis_block(Blockchain *blockchain, KeyPair *keypair)
     return 1;
 }
 
+/**
+ * is_chain_valid - Cryptographically verifies the integrity of the full ledger
+ * @blockchain: The blockchain ledger to validate
+ * @keypair: The public key used to verify all digital signatures
+ *
+ * Description: Recalculates hashes and verifies signatures to ensure
+ * no block data has been tampered with since creation.
+ *
+ * Return: 1 if the entire chain is valid, 0 if any block is corrupted
+ */
 int is_chain_valid(const Blockchain *blockchain, KeyPair *keypair)
 {
     if (!blockchain || !keypair || blockchain->num_blocks == 0) return 0;
@@ -142,24 +194,31 @@ int is_chain_valid(const Blockchain *blockchain, KeyPair *keypair)
 
         if (i > 0) {
             if (strcmp(block->previous_hash, blockchain->blocks[i - 1].hash) != 0) {
-                return 0; // previous_hash mismatch
+                return 0; /* previous_hash mismatch */
             }
         }
 
         if (!verify_block_signature(block, keypair)) {
-            return 0; // invalid signature
+            return 0; /* invalid signature */
         }
 
         char *hash = calculate_hash(block);
         if (strcmp(hash, block->hash) != 0) {
             free(hash);
-            return 0; // hash mismatch
+            return 0; /* hash mismatch */
         }
         free(hash);
     }
     return 1;
 }
 
+/**
+ * save_blockchain - Serializes the blockchain array to a binary file
+ * @blockchain: The blockchain to persist
+ * @filename: Path to the destination file
+ *
+ * Return: 1 on success, 0 on failure
+ */
 int save_blockchain(const Blockchain *blockchain, const char *filename)
 {
     FILE *f = fopen(filename, "wb");
@@ -176,6 +235,13 @@ int save_blockchain(const Blockchain *blockchain, const char *filename)
     return 1;
 }
 
+/**
+ * load_blockchain - Deserializes the blockchain array from a binary file
+ * @blockchain: The struct to populate with the loaded blocks
+ * @filename: Path to the source file
+ *
+ * Return: 1 on success, 0 on failure
+ */
 int load_blockchain(Blockchain *blockchain, const char *filename)
 {
     FILE *f = fopen(filename, "rb");

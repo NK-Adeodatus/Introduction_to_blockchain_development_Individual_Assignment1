@@ -5,11 +5,26 @@
 #include "crypto.h"
 #include "block_chain.h"
 
+/**
+ * clear_input - Flushes the standard input buffer
+ *
+ * Description: Discards remaining characters in stdin until a newline
+ * or EOF is encountered, preventing infinite loops during invalid user input.
+ *
+ * Return: void
+ */
 void clear_input() {
     int c;
     while ((c = getchar()) != '\n' && c != EOF) { }
 }
 
+/**
+ * print_records - Outputs all blocks in the blockchain ledger to stdout
+ * @chain: The blockchain to iterate over
+ * @keypair: The keypair used to live-verify each block's signature
+ *
+ * Return: void
+ */
 void print_records(const Blockchain *chain, KeyPair *keypair) {
     printf("\n--- Blockchain Records ---\n");
     for (int i = 0; i < chain->num_blocks; i++) {
@@ -25,6 +40,14 @@ void print_records(const Blockchain *chain, KeyPair *keypair) {
     printf("--------------------------\n");
 }
 
+/**
+ * main - Entry point for the Blockchain Library Tracker
+ *
+ * Description: Initializes data registries, sets up cryptographic keys,
+ * loads the persistent ledger, and runs the interactive CLI loop.
+ *
+ * Return: 0 on successful execution, 1 on critical failure
+ */
 int main() {
     Book *books = NULL;
     int num_books = 0;
